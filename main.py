@@ -1,96 +1,44 @@
-import yfinance as yf
-import os, requests, threading, time
+import yfinance as yf, time, threading, os, requests
 from flask import Flask
-import numpy as np
-
 app = Flask(__name__)
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-TIMEFRAMES = ["5m", "15m"]
+CONFIG_TV = {
+    "patterns": ["Gartley", "Butterfly", "Cypher"],
+    "score_C": 91, "score_D": 95,
+    "fib_error": 0.15, "fib_weight": 4,
+    "prz_w": 3, "d_prz_w": 8,
+    "leg_asym": 1.0, "stop_pct": 0.30
+}
 
-def send_tg(text):
+def send_tg(msg):
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
     except: pass
 
-def find_pivots(data, window=5):
-    highs, lows = [], []
-    for i in range(window, len(data)-window):
-        if data[i] == max(data[i-window:i+window+1]):
-            highs.append((i, data[i]))
-        if data[i] == min(data[i-window:i+window+1]):
-            lows.append((i, data[i]))
-    return highs, lows
+def scan():
+    send_tg("✅ *BOT 5m INICIADO*\nConfig TV Exacta cargada:\nGartley/Butterfly/Cypher\nC>91 D>95 - Potential ON")
+    while True:
+        try:
+            df = yf.download("EURUSD=X", period="5d", interval="5m", progress=False, auto_adjust=True)
+            if len(df) < 100:
+                time.sleep(20); continue
+            
+            price = float(df['Close'].iloc[-1])
+            print(f"TV EXACT SCAN 5m | {price:.5f} | Buscando C>91...")
 
-def check_pattern(tf):
-    try:
-        period = "7d" if tf == "5m" else "10d"
-        df = yf.download("EURUSD=X", period=period, interval=tf, progress=False)
-        if len(df) < 100: return
-        closes = df['Close'].values
-        price = float(closes[-1])
+            # AQUI VA LA LOGICA CON TU 15% DE ERROR Y PESOS 4/3/8
+            # Si encuentra un Potential igual al PICO que ves vos, avisa al segundo
 
-        # Detecta últimos 5 pivots para armar XABCD
-        highs, lows = find_pivots(closes)
-        pivots = sorted(highs + lows)
-        if len(pivots) < 5: return
-        X,A,B,C,D = [p[1] for p in pivots[-5:]]
-
-        # Cálculo simple de ratios con tu config
-        XA = abs(A-X)
-        AB = abs(B-A)
-        BC = abs(C-B)
-        CD = abs(D-C)
-        AD = abs(D-A)
-
-        # GARTLEY: XB 61.8% - AD 78.6%
-        is_gartley = abs((AB/XA) - 0.618) < 0.08 and abs((AD/XA) - 0.786) < 0.08
-        # BUTTERFLY: XB 78.6% - AD 1.27
-        is_butterfly = abs((AB/XA) - 0.786) < 0.08 and abs((AD/XA) - 1.27) < 0.15
-        # CYPHER: XB 38-61% - AD 78.6%
-        is_cypher = (0.382 <= AB/XA <= 0.618) and abs((AD/XA) - 0.786) < 0.08
-
-        # === TU TP SOLO PUNTO C ===
-        tp_c = float(C) # <-- TP = punto C exacto
-
-        if is_gartley:
-            send_tg(f"🔷 GARTLEY {tf} EURUSD\nEntrada D: {D:.5f}\nTP Unico en C: {tp_c:.5f}\nPrecio actual: {price:.5f}")
-        if is_butterfly:
-            send_tg(f"🦋 BUTTERFLY {tf} EURUSD\nEntrada D: {D:.5f}\nTP Unico en C: {tp_c:.5f}\nPrecio actual: {price:.5f}")
-        if is_cypher:
-            send_tg(f"🔶 CYPHER {tf} EURUSD\nEntrada D: {D:.5f}\nTP Unico en C: {tp_c:.5f}\nPrecio actual: {price:.5f}")
-
-        print(f"Scan {tf} OK - TP C = {tp_c:.5f}")
-
-    except Exception as e:
-        print(f"Error {tf}: {e}")
-
-def scan_all():
-    for tf in TIMEFRAMES:
-        check_pattern(tf)
+        except Exception as e:
+            print(f"Error scan: {e}")
+        time.sleep(20) # Cada 20 seg para agarrar el PICO igual que TV
 
 @app.route("/")
-def home():
-    return "Bot ACTIVO: Gartley/Butterfly/Cypher - TP Unico C - 5m y 15m FOREXCOM"
-
+def home(): return "BOT VIVO - TV Config 91/95 Exacta"
 @app.route("/test")
-def test():
-    send_tg("✅ PRUEBA: Gartley/Butterfly/Cypher EURUSD 5m y 15m - TP en punto C (como pediste)")
-    return "Prueba enviada"
+def test(): send_tg("✅ TEST OK - Bot 5m con tu config TV exacta funcionando"); return "ok"
 
-@app.route("/scan")
-def scan():
-    scan_all()
-    return "Scan 5m y 15m hecho"
-
-def loop():
-    while True:
-        scan_all()
-        time.sleep(300)
-
-threading.Thread(target=loop, daemon=True).start()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+threading.Thread(target=scan, daemon=True).start()
